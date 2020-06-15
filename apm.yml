@@ -1,0 +1,122 @@
+version: '2.2'
+services:
+  apm-server:
+    image: docker.elastic.co/apm/apm-server:7.7.1
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      kibana:
+        condition: service_healthy
+    cap_add: ["CHOWN", "DAC_OVERRIDE", "SETGID", "SETUID"]
+    cap_drop: ["ALL"]
+    ports:
+    - 8200:8200
+    networks:
+    - elastic
+    command: >
+       apm-server -e
+         -E apm-server.rum.enabled=true
+         -E setup.kibana.host=kibana:5601
+         -E setup.template.settings.index.number_of_replicas=0
+         -E apm-server.kibana.enabled=true
+         -E apm-server.kibana.host=kibana:5601
+         -E output.elasticsearch.hosts=["elasticsearch:9200"]
+    healthcheck:
+      interval: 10s
+      retries: 12
+      test: curl --write-out 'HTTP %{http_code}' --fail --silent --output /dev/null http://localhost:8200/
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.7.1
+    environment:
+    - bootstrap.memory_lock=true
+    - cluster.name=docker-cluster
+    - cluster.routing.allocation.disk.threshold_enabled=false
+    - discovery.type=single-node
+    - ES_JAVA_OPTS=-XX:UseAVX=2 -Xms1g -Xmx1g
+    ulimits:
+      memlock:
+        hard: -1
+        soft: -1
+    volumes:
+    - esdata:/usr/share/elasticsearch/data
+    ports:
+    - 9200:9200
+    networks:
+    - elastic
+    healthcheck:
+      interval: 20s
+      retries: 10
+      test: curl -s http://localhost:9200/_cluster/health | grep -vq '"status":"red"'
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.7.1
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    ports:
+    - 5601:5601
+    networks:
+    - elastic
+    healthcheck:
+      interval: 10s
+      retries: 20
+      test: curl --write-out 'HTTP %{http_code}' --fail --silent --output /dev/null http://localhost:5601/api/status
+
+
+  db:
+    image: postgres
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+    - './.data/postgres:/var/lib/postgresql/data'
+    networks:
+    - elastic
+    ports:
+    - 5432:5432
+  s3:
+    image: localstack/localstack:latest
+    ports:
+      - '4563-4599:4563-4599'
+      - '8055:8080'
+    environment:
+      - DEBUG=0
+      - LOCALSTACK_SERVICES=s3
+      - DATA_DIR=/tmp/localstack/data
+    volumes:
+      - './.data/localstack:/tmp/localstack'
+      - '/var/run/docker.sock:/var/run/docker.sock'
+    networks:
+    - elastic
+  web:
+    build: .
+    env_file:
+      - ./.env
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db/hmpps-book-secure-move-api
+      - SECRET_KEY_BASE=h463472fhaa91f4a277002e9652f86f330e636358e2090d86ab4a4f06845ege1
+      - SERVE_API_DOCS=true
+      - AWS_ACCESS_KEY_ID=fakeid
+      - AWS_SECRET_ACCESS_KEY=fakesecret
+      - S3_BUCKET_NAME=apibook-a-secure-move-documents-s3-bucket
+      - S3_BACKEND=http://s3:4572
+    networks:
+    - elastic
+    ports:
+      - "3000:3000"
+    depends_on:
+      - db
+      - s3
+
+
+volumes:
+  esdata:
+    driver: local
+
+networks:
+  elastic:
+    driver: bridge
