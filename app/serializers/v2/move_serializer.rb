@@ -29,7 +29,7 @@ module V2
     belongs_to :supplier,               serializer: SupplierSerializer
     belongs_to :to_location,            serializer: LocationSerializer
 
-    has_many :court_hearings, serializer: CourtHearingSerializer
+    has_many_if_included :court_hearings, serializer: CourtHearingSerializer
 
     has_many_if_included :timeline_events, serializer: ->(record, _params) { record.class.serializer }, &:all_events_for_timeline
     has_many_if_included :important_events, serializer: ImportantEventsSerializer, &:important_events
